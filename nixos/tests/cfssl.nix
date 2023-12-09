@@ -6,34 +6,6 @@ import ./make-test-python.nix ({ pkgs, ...} : {
     networking.firewall.allowedTCPPorts = [ config.services.cfssl.port ];
 
     services.cfssl.enable = true;
-    systemd.services.cfssl.after = [ "cfssl-init.service" ];
-
-    systemd.services.cfssl-init = {
-      description = "Initialize the cfssl CA";
-      wantedBy    = [ "multi-user.target" ];
-      serviceConfig = {
-        User             = "cfssl";
-        Type             = "oneshot";
-        WorkingDirectory = config.services.cfssl.dataDir;
-      };
-      script = with pkgs; ''
-        ${cfssl}/bin/cfssl genkey -initca ${pkgs.writeText "ca.json" (builtins.toJSON {
-          hosts = [ "ca.example.com" ];
-          key = {
-            algo = "rsa"; size = 4096; };
-            names = [
-              {
-                C = "US";
-                L = "San Francisco";
-                O = "Internet Widgets, LLC";
-                OU = "Certificate Authority";
-                ST = "California";
-              }
-            ];
-        })} | ${cfssl}/bin/cfssljson -bare ca
-      '';
-    };
-  };
 
   testScript =
   let
