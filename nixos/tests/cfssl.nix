@@ -4,8 +4,8 @@ import ./make-test-python.nix ({ pkgs, ...} : {
   nodes.machine = { config, lib, pkgs, ... }:
   {
     networking.firewall.allowedTCPPorts = [ config.services.cfssl.port ];
-
     services.cfssl.enable = true;
+  };
 
   testScript =
   let

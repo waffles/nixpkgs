@@ -1167,6 +1167,7 @@
   ./services/security/authelia.nix
   ./services/security/certmgr.nix
   ./services/security/cfssl.nix
+  ./services/security/cfssl-multirootca.nix
   ./services/security/clamav.nix
   ./services/security/endlessh-go.nix
   ./services/security/endlessh.nix
