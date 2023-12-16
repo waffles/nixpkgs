@@ -55,6 +55,7 @@ in
     services.kubernetes.pki.certs = {
       flannelClient = top.lib.mkCert {
         name = "flannel-client";
+        caName = "k8sCa"; ## xxx not sure about this
         CN = "flannel-client";
         action = "systemctl restart flannel.service";
       };

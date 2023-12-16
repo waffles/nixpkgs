@@ -90,6 +90,7 @@ in
     services.kubernetes.pki.certs = {
       kubeProxyClient = top.lib.mkCert {
         name = "kube-proxy-client";
+        caName = "k8sCa";
         CN = "system:kube-proxy";
         action = "systemctl restart kube-proxy.service";
       };

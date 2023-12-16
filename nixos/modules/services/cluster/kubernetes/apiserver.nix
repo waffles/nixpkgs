@@ -340,6 +340,7 @@ in
                 "--advertise-address=${cfg.advertiseAddress}"} \
               ${optionalString (cfg.clientCaFile != null)
                 "--client-ca-file=${cfg.clientCaFile}"} \
+              --requestheader-client-ca-file=/var/lib/kubernetes/secrets/frontProxyCa.pem \
               --disable-admission-plugins=${concatStringsSep "," cfg.disableAdmissionPlugins} \
               --enable-admission-plugins=${concatStringsSep "," cfg.enableAdmissionPlugins} \
               --etcd-servers=${concatStringsSep "," cfg.etcd.servers} \
@@ -431,6 +432,7 @@ in
       services.kubernetes.pki.certs = with top.lib; {
         apiServer = mkCert {
           name = "kube-apiserver";
+          caName = "k8sCa";
           CN = "kubernetes";
           hosts = [
                     "kubernetes.default.svc"
@@ -444,21 +446,26 @@ in
         };
         apiserverProxyClient = mkCert {
           name = "kube-apiserver-proxy-client";
+          caName = "frontProxyCa";
           CN = "front-proxy-client";
           action = "systemctl restart kube-apiserver.service";
         };
         apiserverKubeletClient = mkCert {
           name = "kube-apiserver-kubelet-client";
+          caName = "k8sCa";
           CN = "system:kube-apiserver";
           action = "systemctl restart kube-apiserver.service";
         };
         apiserverEtcdClient = mkCert {
           name = "kube-apiserver-etcd-client";
+          caName = "etcdCa";
           CN = "etcd-client";
           action = "systemctl restart kube-apiserver.service";
         };
+
         clusterAdmin = mkCert {
           name = "cluster-admin";
+          caName = "k8sCa";
           CN = "cluster-admin";
           fields = {
             O = "system:masters";
@@ -467,6 +474,7 @@ in
         };
         etcd = mkCert {
           name = "etcd";
+          caName = "etcdCa";
           CN = top.masterAddress;
           hosts = [
                     "etcd.local"

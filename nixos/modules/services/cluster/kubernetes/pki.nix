@@ -6,12 +6,28 @@ let
   top = config.services.kubernetes;
   cfg = top.pki;
 
-  csrCA = pkgs.writeText "kube-pki-cacert-csr.json" (builtins.toJSON {
+  k8sCaCsr = pkgs.writeText "kube-pki-k8s-ca-csr.json" (builtins.toJSON {
     key = {
         algo = "rsa";
         size = 2048;
     };
-    names = singleton cfg.caSpec;
+    names = singleton cfg.k8sCaSpec;
+  });
+  
+  etcdCaCsr = pkgs.writeText "kube-pki-etcd-ca-csr.json" (builtins.toJSON {
+    key = {
+        algo = "rsa";
+        size = 2048;
+    };
+    names = singleton cfg.etcdCaSpec;
+  });
+
+  frontProxyCaCsr = pkgs.writeText "kube-pki-front-proxy-ca-csr.json" (builtins.toJSON {
+    key = {
+        algo = "rsa";
+        size = 2048;
+    };
+    names = singleton cfg.frontProxyCaSpec;
   });
 
   csrCfssl = pkgs.writeText "kube-pki-cfssl-csr.json" (builtins.toJSON {
@@ -23,10 +39,43 @@ let
     hosts = [top.masterAddress] ++ cfg.cfsslAPIExtraSANs;
   });
 
-  cfsslAPITokenBaseName = "apitoken.secret";
-  cfsslAPITokenPath = "${config.services.cfssl.dataDir}/${cfsslAPITokenBaseName}";
-  certmgrAPITokenPath = "${top.secretsPath}/${cfsslAPITokenBaseName}";
-  cfsslAPITokenLength = 32;
+  rootToIm = pkgs.writeText "root-to-im.json" (builtins.toJSON {    
+    signing = {
+        default = {
+            expiry = "43800h";
+            ca_constraint = {
+                is_ca = true;
+                max_path_len = 0;
+                max_path_len_zero = true;
+            };
+            usages = [
+                "digital signature"
+                "cert sign"
+                "crl sign"
+                "signing"
+            ];
+        };    
+    };
+  });
+
+  k8sCaApiTokenBaseName = "k8sCa.secret";
+  etcdCaApiTokenBaseName = "etcdCa.secret";
+  frontProxyCaApiTokenBaseName = "frontProxyCa.secret";
+
+  apiTokenPaths = {
+    multirootca = with config.services; {
+      k8sCa = "${cfssl-multirootca.workingDir}/${k8sCaApiTokenBaseName}";
+      etcdCa = "${cfssl-multirootca.workingDir}/${etcdCaApiTokenBaseName}";
+      frontProxyCa = "${cfssl-multirootca.workingDir}/${frontProxyCaApiTokenBaseName}";
+    };
+    certmgr = {
+      k8sCa = "${top.secretsPath}/${k8sCaApiTokenBaseName}";
+      etcdCa = "${top.secretsPath}/${etcdCaApiTokenBaseName}";
+      frontProxyCa = "${top.secretsPath}/${frontProxyCaApiTokenBaseName}";
+    };
+  };
+ 
+  apiTokenLength = 32;
 
   clusterAdminKubeconfig = with cfg.certs.clusterAdmin;
     top.lib.mkKubeConfig "cluster-admin" {
@@ -35,7 +84,7 @@ let
         keyFile = key;
     };
 
-  remote = with config.services; "https://${kubernetes.masterAddress}:${toString cfssl.port}";
+  remote = with config.services; "https://${kubernetes.masterAddress}:${toString cfssl-multirootca.port}";
 in
 {
   ###### interface
@@ -91,21 +140,32 @@ in
       type = bool;
     };
 
-    caCertPathPrefix = mkOption {
-      description = lib.mdDoc ''
-        Path-prefrix for the CA-certificate to be used for cfssl signing.
-        Suffixes ".pem" and "-key.pem" will be automatically appended for
-        the public and private keys respectively.
-      '';
-      default = "${config.services.cfssl.dataDir}/ca";
-      defaultText = literalExpression ''"''${config.services.cfssl.dataDir}/ca"'';
-      type = str;
+    k8sCaSpec = mkOption {
+      description = lib.mdDoc "Certificate specification for the auto-generated Kubernetes general CA.";
+      default = {
+        CN = "kubernetes-ca";
+        O = "NixOS";
+        OU = "services.kubernetes.pki.caSpec";
+        L = "auto-generated";
+      };
+      type = attrs;
     };
 
-    caSpec = mkOption {
-      description = lib.mdDoc "Certificate specification for the auto-generated CAcert.";
+    etcdCaSpec = mkOption {
+      description = lib.mdDoc "Certificate specification for the auto-generated Kubernetes general CA.";
       default = {
-        CN = "kubernetes-cluster-ca";
+        CN = "etcd-ca";
+        O = "NixOS";
+        OU = "services.kubernetes.pki.caSpec";
+        L = "auto-generated";
+      };
+      type = attrs;
+    };
+
+   frontProxyCaSpec = mkOption {
+      description = lib.mdDoc "Certificate specification for the auto-generated Kubernetes general CA.";
+      default = {
+        CN = "kubernetes-front-proxy-ca";
         O = "NixOS";
         OU = "services.kubernetes.pki.caSpec";
         L = "auto-generated";
@@ -127,57 +187,94 @@ in
   ###### implementation
   config = mkIf cfg.enable
   (let
-    cfsslCertPathPrefix = "${config.services.cfssl.dataDir}/cfssl";
+    cfsslCertPathPrefix = "${config.services.cfssl-multirootca.workingDir}/cfssl";
     cfsslCert = "${cfsslCertPathPrefix}.pem";
     cfsslKey = "${cfsslCertPathPrefix}-key.pem";
   in
   {
 
-    services.cfssl = mkIf (top.apiserver.enable) {
+    services.cfssl-multirootca = mkIf (top.apiserver.enable) {
       enable = true;
       address = "0.0.0.0";
       tlsCert = cfsslCert;
       tlsKey = cfsslKey;
-      configFile = toString (pkgs.writeText "cfssl-config.json" (builtins.toJSON {
-        signing = {
-          profiles = {
-            default = {
-              usages = ["digital signature"];
-              auth_key = "default";
-              expiry = "720h";
-            };
-          };
-        };
-        auth_keys = {
-          default = {
-            type = "standard";
-            key = "file:${cfsslAPITokenPath}";
-          };
-        };
-      }));
     };
 
-    systemd.services.cfssl.preStart = with pkgs; with config.services.cfssl; mkIf (top.apiserver.enable)
+    systemd.services.cfssl-multirootca.preStart = with pkgs; with config.services.cfssl-multirootca; mkIf (top.apiserver.enable)
     (concatStringsSep "\n" [
       "set -e"
+      "if [ ! -f ${workingDir}/${rootsFile} ]; then"
+      (concatStringsSep "\n" (mapAttrsToList (key: value:
+      ''
+        echo '${(builtins.toJSON {
+            signing = {
+              profiles = {
+                default = {
+                  usages = [
+                    "digital signature"
+                  ];
+                  auth_key = "default";
+                  expiry = "8760h";
+                };
+              };
+            };
+            auth_keys = {
+              default = {
+                type = "standard";
+                key = "file:${value}";
+              };
+            };
+          })}' > "${workingDir}/${key}-config.json"        
+          echo '
+          [ ${key} ]
+          private = file://${key}-key.pem
+          certificate = ${key}.pem
+          config = ${key}-config.json' \
+            >> ${workingDir}/${rootsFile};      
+      ${(optionalString cfg.genCfsslAPIToken 
+      ''
+        if [ ! -f "${value}" ]; then
+          head -c ${toString (apiTokenLength / 2)} /dev/urandom | od -An -t x | tr -d ' ' >"${value}"
+        fi
+        chown cfssl-multirootca "${value}" && chmod 400 "${value}"
+      '')}
+      ''
+      ) apiTokenPaths.multirootca))
+      
+      "fi"
       (optionalString cfg.genCfsslCACert ''
-        if [ ! -f "${cfg.caCertPathPrefix}.pem" ]; then
-          ${cfssl}/bin/cfssl genkey -initca ${csrCA} | \
-            ${cfssl}/bin/cfssljson -bare ${cfg.caCertPathPrefix}
+        if [ ! -f "${workingDir}/k8sCa.pem" ]; then
+          ${cfssl}/bin/cfssl genkey -initca ${k8sCaCsr} | \
+            ${cfssl}/bin/cfssljson -bare ${workingDir}/k8sCa
+        fi
+        if [ ! -f "${workingDir}/etcdCa.pem" ]; then
+          ${cfssl}/bin/cfssl gencert \
+            -ca ${workingDir}/k8sCa.pem \
+            -ca-key ${workingDir}/k8sCa-key.pem \
+            -config ${rootToIm} \
+            ${etcdCaCsr} | \
+            ${cfssl}/bin/cfssljson -bare etcdCa
+        fi
+         if [ ! -f "${workingDir}/frontProxyCa.pem" ]; then
+          ${cfssl}/bin/cfssl gencert \
+            -ca ${workingDir}/k8sCa.pem \
+            -ca-key ${workingDir}/k8sCa-key.pem \
+            -config ${rootToIm} \
+            ${frontProxyCaCsr} | \
+            ${cfssl}/bin/cfssljson -bare frontProxyCa
         fi
       '')
+
       (optionalString cfg.genCfsslAPICerts ''
-        if [ ! -f "${dataDir}/cfssl.pem" ]; then
-          ${cfssl}/bin/cfssl gencert -ca "${cfg.caCertPathPrefix}.pem" -ca-key "${cfg.caCertPathPrefix}-key.pem" ${csrCfssl} | \
+        if [ ! -f "${workingDir}/cfssl.pem" ]; then
+          ${cfssl}/bin/cfssl gencert \
+          -ca ${workingDir}/k8sCa.pem \
+          -ca-key ${workingDir}/k8sCa-key.pem \
+          ${csrCfssl} | \
             ${cfssl}/bin/cfssljson -bare ${cfsslCertPathPrefix}
         fi
       '')
-      (optionalString cfg.genCfsslAPIToken ''
-        if [ ! -f "${cfsslAPITokenPath}" ]; then
-          head -c ${toString (cfsslAPITokenLength / 2)} /dev/urandom | od -An -t x | tr -d ' ' >"${cfsslAPITokenPath}"
-        fi
-        chown cfssl "${cfsslAPITokenPath}" && chmod 400 "${cfsslAPITokenPath}"
-      '')]);
+      ]);
 
     systemd.services.kube-certmgr-bootstrap = {
       description = "Kubernetes certmgr bootstrapper";
@@ -190,17 +287,36 @@ in
         # manually paste it in place. Just symlink.
         # otherwise, create the target file, ready for users to insert the token
 
-        mkdir -p "$(dirname "${certmgrAPITokenPath}")"
-        if [ -f "${cfsslAPITokenPath}" ]; then
-          ln -fs "${cfsslAPITokenPath}" "${certmgrAPITokenPath}"
+        mkdir -p '${dirOf apiTokenPaths.certmgr.k8sCa}'
+
+        if [ -f "${apiTokenPaths.multirootca.k8sCa}" ]; then
+          ln -fs "${apiTokenPaths.multirootca.k8sCa}" "${apiTokenPaths.certmgr.k8sCa}"
         else
-          touch "${certmgrAPITokenPath}" && chmod 600 "${certmgrAPITokenPath}"
+          touch "${apiTokenPaths.certmgr.k8sCa}" && chmod 600 "${apiTokenPaths.certmgr.k8sCa}"
+        fi
+        if [ -f "${apiTokenPaths.multirootca.etcdCa}" ]; then
+          ln -fs "${apiTokenPaths.multirootca.etcdCa}" "${apiTokenPaths.certmgr.etcdCa}"
+        else
+          touch "${apiTokenPaths.certmgr.etcdCa}" && chmod 600 "${apiTokenPaths.certmgr.etcdCa}"
+        fi
+        if [ -f "${apiTokenPaths.multirootca.frontProxyCa}" ]; then
+          ln -fs "${apiTokenPaths.multirootca.frontProxyCa}" "${apiTokenPaths.certmgr.frontProxyCa}"
+        else
+          touch "${apiTokenPaths.certmgr.frontProxyCa}" && chmod 600 "${apiTokenPaths.certmgr.frontProxyCa}"
         fi
       ''
       (optionalString (cfg.pkiTrustOnBootstrap) ''
         if [ ! -f "${top.caFile}" ] || [ $(cat "${top.caFile}" | wc -c) -lt 1 ]; then
-          ${pkgs.curl}/bin/curl --fail-early -f -kd '{}' ${remote}/api/v1/cfssl/info | \
+          ${pkgs.curl}/bin/curl --fail-early -f -kd '{ "label": "k8sCa" }' ${remote}/api/v1/cfssl/info | \
             ${pkgs.cfssl}/bin/cfssljson -stdout >${top.caFile}
+        fi
+        if [ ! -f "${top.lib.secret "etcdCa"}" ] || [ $(cat "${top.lib.secret "etcdCa"}" | wc -c) -lt 1 ]; then
+          ${pkgs.curl}/bin/curl --fail-early -f -kd '{ "label": "etcdCa" }' ${remote}/api/v1/cfssl/info | \
+            ${pkgs.cfssl}/bin/cfssljson -stdout >${top.lib.secret "etcdCa"}
+        fi
+        if [ ! -f "${top.lib.secret "frontProxyCa"}" ] || [ $(cat "${top.lib.secret "frontProxyCa"}" | wc -c) -lt 1 ]; then
+          ${pkgs.curl}/bin/curl --fail-early -f -kd '{ "label": "frontProxyCa" }' ${remote}/api/v1/cfssl/info | \
+            ${pkgs.cfssl}/bin/cfssljson -stdout >${top.lib.secret "frontProxyCa"}
         fi
       '')
       ];
@@ -209,6 +325,8 @@ in
         Restart = "on-failure";
       };
     };
+
+    security.pki.certificateFiles = [top.caFile];
 
     services.certmgr = {
       enable = true;
@@ -220,10 +338,11 @@ in
             inherit (cert) action;
             authority = {
               inherit remote;
-              file.path = cert.caCert;
-              root_ca = cert.caCert;
+              # file.path = cert.caCert;
+              root_ca = cfsslCert;
               profile = "default";
-              auth_key_file = certmgrAPITokenPath;
+              label = cert.label;
+              auth_key_file = apiTokenPaths.certmgr."${toString cert.label}";
             };
             certificate = {
               path = cert.cert;
@@ -282,7 +401,7 @@ in
           echo "Usage: $(basename $0)"
           echo ""
           echo "No args. Apitoken must be provided on stdin."
-          echo "To get the apitoken, execute: 'sudo cat ${certmgrAPITokenPath}' on the master node."
+          echo "To get the apitoken, execute: 'sudo cat ${apiTokenPaths.certmgr.k8sCa}' on the master node."
           exit 1
         fi
 
@@ -292,13 +411,13 @@ in
         fi
 
         read -r token
-        if [ ''${#token} != ${toString cfsslAPITokenLength} ]; then
-          echo "Token must be of length ${toString cfsslAPITokenLength}."
+        if [ ''${#token} != ${toString apiTokenLength} ]; then
+          echo "Token must be of length ${toString apiTokenLength}."
           exit 1
         fi
 
-        echo $token > ${certmgrAPITokenPath}
-        chmod 600 ${certmgrAPITokenPath}
+        echo $token > ${apiTokenPaths.certmgr.k8sCa}
+        chmod 600 ${apiTokenPaths.certmgr.k8sCa}
 
         echo "Restarting certmgr..." >&1
         systemctl restart certmgr

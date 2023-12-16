@@ -56,14 +56,16 @@ let
     current-context = "local";
   });
 
-  caCert = secret "ca";
+  caCert = secret "k8sCa";
 
   etcdEndpoints = ["https://${cfg.masterAddress}:2379"];
 
-  mkCert = { name, CN, hosts ? [], fields ? {}, action ? "",
+  mkCert = { name, caName, CN, hosts ? [], fields ? {}, action ? "",
              privateKeyOwner ? "kubernetes" }: rec {
-    inherit name caCert CN hosts fields action;
+    inherit name CN hosts fields action;
     cert = secret name;
+    caCert = secret caName;
+    label = caName;
     key = secret "${name}-key";
     privateKeyOptions = {
       owner = privateKeyOwner;
@@ -181,6 +183,7 @@ in {
       description = lib.mdDoc "Common functions for the kubernetes modules.";
       default = {
         inherit mkCert;
+        inherit secret;
         inherit mkKubeConfig;
         inherit mkKubeConfigOptions;
       };
@@ -260,6 +263,7 @@ in {
         serviceAccount = mkCert {
           name = "service-account";
           CN = "system:service-account-signer";
+          caName = "k8sCa"; ## xxx not sure about this
           action = ''
             systemctl reload \
               kube-apiserver.service \

@@ -348,12 +348,18 @@ in
       services.kubernetes.pki.certs = with top.lib; {
         kubelet = mkCert {
           name = "kubelet";
+          caName = "k8sCa";
           CN = top.kubelet.hostname;
+          hosts = [
+            top.masterAddress
+            top.apiserver.advertiseAddress
+          ];
           action = "systemctl restart kubelet.service";
 
         };
         kubeletClient = mkCert {
           name = "kubelet-client";
+          caName = "k8sCa";
           CN = "system:node:${top.kubelet.hostname}";
           fields = {
             O = "system:nodes";

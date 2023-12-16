@@ -152,11 +152,13 @@ in
     services.kubernetes.pki.certs = with top.lib; {
       controllerManager = mkCert {
         name = "kube-controller-manager";
+        caName = "k8sCa"; ## xxx not sure about this
         CN = "kube-controller-manager";
         action = "systemctl restart kube-controller-manager.service";
       };
       controllerManagerClient = mkCert {
         name = "kube-controller-manager-client";
+        caName = "k8sCa"; ## xxx not sure about this
         CN = "system:kube-controller-manager";
         action = "systemctl restart kube-controller-manager.service";
       };

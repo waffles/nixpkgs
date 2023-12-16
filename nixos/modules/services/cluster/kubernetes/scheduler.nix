@@ -89,6 +89,7 @@ in
     services.kubernetes.pki.certs = {
       schedulerClient = top.lib.mkCert {
         name = "kube-scheduler-client";
+        caName = "k8sCa";
         CN = "system:kube-scheduler";
         action = "systemctl restart kube-scheduler.service";
       };
