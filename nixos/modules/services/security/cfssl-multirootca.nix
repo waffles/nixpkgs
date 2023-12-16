@@ -32,24 +32,31 @@ in {
       description = lib.mdDoc "Log level (0 = DEBUG, 5 = FATAL).";
     };
 
-    roots = mkOption {
+    rootsFile = mkOption {
+      default = "roots.conf";
       type = types.str;
       description = lib.mdDoc ''
         An absolute path to a configuration file specifying the roots and their keys.
         See: https://github.com/cloudflare/cfssl
 
-        :::{.note}
-        The directory containing the roots file will be used as the working 
-        directory of the multirootca service so paths in the roots file will
-        be relative to that path.
-
-        Please ensure the directory is readable and executable, and that the roots 
-        file as well as all certs referecned in it are readable by the 
-        cfssl-multirootca user in the cfssl group.
-
         Do not put this in nix-store as it might contain secrets.
-        :::
         '';
+    };
+
+    workingDir = mkOption {
+      default = "/var/lib/cfssl-multirootca";
+      type = types.path;
+      description = lib.mdDoc ''
+        The working directory for multirootca. Paths in the roots configuration
+        will be relitive to this directory.
+
+        ::: {.note}
+        If left as the default value this directory will automatically be
+        created before the multirootca server starts, otherwise you are
+        responsible for ensuring the directory exists with appropriate
+        ownership and permissions.
+        :::
+      '';
     };
 
     tlsCert = mkOption {
@@ -83,7 +90,7 @@ in {
 
       serviceConfig = lib.mkMerge [
         {
-          WorkingDirectory = dirOf cfg.roots;
+          WorkingDirectory =  cfg.workingDir;
           Restart = "always";
           User = "cfssl-multirootca";
           Group = "cfssl";
@@ -96,11 +103,15 @@ in {
               (opt "a" "${address}:${(toString port)}")
               (opt "l" defaultLabel)
               (opt "loglevel" (toString logLevel))
-              (opt "roots" roots)
+              (opt "roots" rootsFile)
               (opt "tls-cert" tlsCert)
               (opt "tls-key" tlsKey)
             ];
         }
+        (mkIf (cfg.workingDir == options.services.cfssl-multirootca.workingDir.default) {
+          StateDirectory = baseNameOf cfg.workingDir;
+          StateDirectoryMode = 700;
+        })
       ];
     };
   };

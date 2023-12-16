@@ -1,7 +1,6 @@
 import ./make-test-python.nix (
   let
     caName = "ca";
-    testDir = "/var/lib/cfssl-multirootca";
   in
   { pkgs, ... } : {
   name = "cfssl-multirootca";
@@ -12,7 +11,6 @@ import ./make-test-python.nix (
     
     services.cfssl-multirootca = {
       enable = true;
-      roots = "${testDir}/roots.conf";
     };
 
     systemd.services.cfssl-multirootca.after = [ "cfssl-multirootca-init.service" ];
@@ -23,9 +21,9 @@ import ./make-test-python.nix (
       serviceConfig = {
         User             = "cfssl-multirootca";
         Type             = "oneshot";           
-        StateDirectory = baseNameOf testDir;
+        StateDirectory = baseNameOf config.services.cfssl-multirootca.workingDir;
         StateDirectoryMode = 700;
-        WorkingDirectory = testDir;
+        WorkingDirectory = config.services.cfssl-multirootca.workingDir;
       };
 
       script = with pkgs; ''
@@ -69,7 +67,7 @@ import ./make-test-python.nix (
         private = file://ca-key.pem
         certificate = ca.pem
         config = cfssl-config.json' \
-          > ${config.services.cfssl-multirootca.roots};
+          > ${config.services.cfssl-multirootca.workingDir}/${config.services.cfssl-multirootca.rootsFile};
       '';
     };
   };
